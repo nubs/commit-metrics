@@ -1,0 +1,296 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Commit Stats</title>
+  <style>
+    .axis path, .axis line {
+      fill: none;
+      stroke: #000;
+      shape-rendering: crispEdges;
+    }
+    .controlbox {
+      float: left;
+      margin-left: 20px;
+    }
+    .controlbox h3 {
+      margin: 0;
+  </style>
+    <script src="//cdnjs.cloudflare.com/ajax/libs/jquery/1.8.2/jquery.min.js"></script>
+    <script src="//cdnjs.cloudflare.com/ajax/libs/underscore.js/1.4.1/underscore-min.js"></script>
+    <script src="//cdnjs.cloudflare.com/ajax/libs/d3/2.10.0/d3.v2.min.js"></script>
+    <script src="//cdnjs.cloudflare.com/ajax/libs/datejs/1.0/date.min.js"></script>
+    <script src="//cdnjs.cloudflare.com/ajax/libs/twitter-bootstrap/2.1.1/bootstrap.min.js"></script>
+    <link href="//netdna.bootstrapcdn.com/twitter-bootstrap/2.1.1/css/bootstrap.no-icons.min.css" rel="stylesheet" />
+  </head>
+  <body>
+    <script>
+      var margin = {top: 10, right: 140, bottom: 25, left: 60};
+      var width = 960;
+      var height = 480;
+      var yMetric = 'added';
+      var rollingPeriod = 7;
+      var allAuthors = [];
+      var allRepositories = [];
+      var allYMetrics = ['added', 'removed', 'count'];
+      var displayAuthors = [];
+      var displayRepositories = [];
+      var minDate = Date.today().addWeeks(-4).getTime();
+      var commits = [];
+      var config = {teams: {}};
+
+      function setConfig(loadedConfig) {
+        config = loadedConfig;
+      }
+
+      var svg = d3.select('body').append('svg')
+        .attr({
+          width: width + margin.left + margin.right,
+          height: height + margin.top + margin.bottom
+        })
+        .append('g')
+        .attr('transform', 'translate(' + margin.left + ',' + margin.top + ')');
+
+      var clip = svg.append("defs").append("svg:clipPath")
+        .attr("id", "clip")
+        .append("svg:rect")
+        .attr("id", "clip-rect")
+        .attr("x", "0")
+        .attr("y", "0")
+        .attr("width", width)
+        .attr("height", height);
+
+      var yMetricForm = d3.select('body').append('div').attr({class: 'controlbox well well-small'});
+      yMetricForm.append('h3').text('Stat');
+      var yMetricButtons = yMetricForm.append('div').attr({class: 'btn-group btn-group-vertical', 'data-toggle': 'buttons-radio'});
+      var yMetricButtons = yMetricButtons.selectAll('button').data(allYMetrics).enter().append('button').text(String).attr({
+        class: function (d) { return 'btn btn-mini' + ( yMetric == d ? ' active' : '' ); },
+      });
+      yMetricButtons.on('click', function (d) {
+        if (d && yMetric != d) {
+          yMetric = d;
+          update();
+        }
+      });
+
+      yMetricForm.append('h3').text('# of Weeks');
+      var minDateInput = yMetricForm.append('input').attr({type: 'text', value: 4, class: 'input-mini'});
+      minDateInput.on('keyup', function () {
+        var newValue = d3.event.target.value;
+        var newDate = Date.today().addWeeks(-newValue).getTime();
+        if (newValue > 0 && newDate != minDate) {
+          minDate = newDate;
+          update();
+        }
+      });
+
+      yMetricForm.append('h3').text('Average Period');
+      var rollingPeriodInput = yMetricForm.append('input').attr({type: 'text', value: rollingPeriod, class: 'input-mini'});
+      rollingPeriodInput.on('keyup', function () {
+        var newValue = d3.event.target.value;
+        if (newValue > 1 && newValue != rollingPeriod) {
+          rollingPeriod = newValue;
+          update();
+        }
+      });
+
+      var xScale = d3.time.scale()
+        .domain([Date.today().addYears(-2), Date.today()])
+        .range([0, width]);
+      var yScale = d3.scale.linear()
+        .domain([0, 3000])
+        .range([height, 0])
+        .clamp(true)
+        .nice();
+
+      var rollingLine = d3.svg.line()
+        .x(function (d) { return xScale(d.date); })
+        .y(function (d) { return yScale(d.rolling[yMetric]); })
+        .interpolate('basis');
+      var zeroLine = d3.svg.line()
+        .x(function (d) { return xScale(d.date); })
+        .y(yScale(0))
+        .interpolate('basis');
+      var colorScale = d3.scale.category20();
+      var transition = svg.transition().duration(1000).ease('exp-in-out');
+      var authorAttributes = {class: 'author', fill: colorScale};
+      var legendAttributes = {class: 'legend', transform: function (d, i) { return 'translate(' + width + ',' + (i * 15) + ')'; }};
+      var commitDotStartAttributes = {cx: rollingLine.x(), cy: yScale(0), r: 2.2, opacity: function (d) { return d[yMetric] ? 1 : 0; }, 'clip-path': 'url(#clip)'};
+      var commitDotAttributes = {cx: rollingLine.x(), cy: function (d) { return yScale(d[yMetric]); }, r: 2.2, opacity: function (d) { return d[yMetric] ? 1 : 0; }};
+
+      var xAxis = d3.svg.axis().scale(xScale).orient('bottom');
+      var yAxis = d3.svg.axis().scale(yScale).orient('left');
+
+      svg.append('g')
+        .attr({
+          class: 'x axis',
+          transform: 'translate(0,' + height + ')'
+        })
+        .call(xAxis);
+
+      svg.append('g')
+        .attr('class', 'y axis')
+        .call(yAxis);
+
+      function loadCommitData(data) {
+        commits = data;
+        displayAuthors = allAuthors = _.uniq(_.pluck(commits, 'author'));
+        displayRepositories = allRepositories = _.uniq(_.pluck(commits, 'repository'));
+
+        var authorForm = d3.select('body').append('div').attr({class: 'controlbox well well-small'});
+        authorForm.append('h3').text('Teams');
+        var teamButtons = authorForm.append('div').attr({class: 'btn-group btn-group-vertical'});
+        var teamButtons = teamButtons.selectAll('button').data(_.keys(config.teams)).enter().append('button').text(String).attr({
+          class: function (d) { return 'btn btn-mini' + ( config.teams[d].sort() == displayAuthors.sort() ? ' active' : ''); }
+        });
+        teamButtons.on('click', function (d) {
+          displayAuthors = config.teams[d];
+          update();
+        });
+
+        authorForm.append('h3').text('Authors');
+        var authorButtons = authorForm.append('div').attr({class: 'btn-group btn-group-vertical', 'data-toggle': 'buttons-checkbox'});
+        var authorButtons = authorButtons.selectAll('button').data(allAuthors).enter().append('button').text(String).attr({
+          class: function (d) { return 'btn btn-mini' + ( _.include(displayAuthors, d) ? ' active' : '' ); }
+        });
+        authorButtons.on('click', function (d) {
+          if (_.include(d3.event.target.classList, 'active')) {
+            displayAuthors = _.without(displayAuthors, d);
+          } else {
+            displayAuthors.push(d);
+          }
+
+          update();
+        });
+
+        var repositoryForm = d3.select('body').append('div').attr({class: 'controlbox well well-small'});
+        repositoryForm.append('h3').text('Projects');
+        var repositoryButtons = repositoryForm.append('div').attr({class: 'btn-group btn-group-vertical', 'data-toggle': 'buttons-checkbox'});
+        var repositoryButtons = repositoryButtons.selectAll('button').data(allRepositories).enter().append('button').text(String).attr({
+          class: function (d) { return 'btn btn-mini' + ( _.include(displayRepositories, d) ? ' active' : '' ); }
+        });
+        repositoryButtons.on('click', function (d) {
+          if (_.include(d3.event.target.classList, 'active')) {
+            displayRepositories = _.without(displayRepositories, d);
+          } else {
+            displayRepositories.push(d);
+          }
+
+          update();
+        });
+
+        update();
+      };
+
+      function filterAndRollup(commits) {
+        var filteredCommits = commits;
+
+        if (displayAuthors.length != allAuthors.length) {
+          filteredCommits = _.filter(filteredCommits, function (c) { return _.contains(displayAuthors, c.author); });
+        }
+
+        if (displayRepositories.length != allRepositories.length) {
+          filteredCommits = _.filter(filteredCommits, function (c) { return _.contains(displayRepositories, c.repository); });
+        }
+
+        if (minDate != 0) {
+          var tempDate = new Date(minDate).addDays(-Math.floor((rollingPeriod - 1) / 2));
+          filteredCommits = _.filter(filteredCommits, function (c) { return c.date * 1000 >= tempDate });
+        }
+
+        if (filteredCommits.length == 0) {
+          console.log('No commits found with the given filters');
+          return;
+        }
+
+        var commitsByAuthor = _.groupBy(filteredCommits, function (c) { return c.author; });
+
+        var commitsByAuthorAndDate = _.map(commitsByAuthor, function (authorCommits, author) {
+          var dates = _.pluck(authorCommits, 'date');
+          var startDate = new Date(_.min(dates) * 1000);
+          var lastDate = new Date(_.max(dates) * 1000).addDays(1);
+          var authorStats = [];
+
+          for (var itdate = startDate; itdate.isBefore(lastDate); itdate.addDays(1)) {
+            var timestamp = itdate.getTime();
+            var onDate = _.where(authorCommits, {date: timestamp / 1000});
+            authorCommits = _.rest(authorCommits, onDate.length);
+            var stats = {author: author, 'date': timestamp, count: onDate.length};
+
+            var tempStats = _.reduce(onDate, function (memo, c) { return {added: memo.added + c.added, removed: memo.removed + c.removed}; }, {added: 0, removed: 0})
+            stats.added = Math.min(3000, tempStats.added);
+            stats.removed = Math.min(3000, tempStats.removed);
+            authorStats.push(stats);
+          }
+
+          authorStats = _.map(authorStats, function (stats, i) {
+            var period = authorStats.slice(Math.max(i - Math.floor((rollingPeriod - 1) / 2), 0), i + Math.ceil((rollingPeriod - 1) / 2));
+            stats.rolling = {
+              added: _.reduce(period, function (memo, c) { return memo + c.added; }, 0) / period.length,
+              removed: _.reduce(period, function (memo, c) { return memo + c.removed; }, 0) / period.length,
+              count: _.reduce(period, function (memo, c) { return memo + c.count; }, 0) / period.length
+            };
+
+            return stats;
+          });
+
+          return authorStats;
+        });
+
+        filteredCommits = _.sortBy(_.flatten(commitsByAuthorAndDate), function (c) { return c.date; });
+
+        return filteredCommits;
+      }
+
+      function update() {
+        filteredCommits = filterAndRollup(commits);
+        var filteredAuthors = _.uniq(_.pluck(filteredCommits, 'author'));
+
+        // Restrict the scales to the possibly changed domain
+        var minTime = d3.min(filteredCommits, function (c) { return c.date; });
+        var maxYMetric = d3.max(filteredCommits, function (c) { return c.rolling[yMetric]; });
+        xScale.domain([new Date(minTime).addDays(Math.floor((rollingPeriod - 1) / 2)), Date.today()]);
+        yScale.domain([0, maxYMetric]);
+        transition.select('.x.axis').call(xAxis);
+        transition.select('.y.axis').call(yAxis);
+
+        var authorData = svg.selectAll('.author').data(filteredAuthors, String);
+
+        var authorLegend = authorData.enter().append('g').attr(authorAttributes).append('g').attr(legendAttributes);
+        authorLegend.append('rect').attr({width: 10, height: 10});
+        authorLegend.append('text').attr({x: 15, dy: '0.71em'}).text(String);
+        authorData.transition().duration(1000).attr(authorAttributes).select('.legend').attr(legendAttributes);
+        var authorExit = authorData.exit().transition().duration(1000);
+        authorExit.selectAll('circle').attr({cy: yScale(0)});
+        authorExit.selectAll('path').attr({d: zeroLine});
+        authorExit.remove();
+
+        _.each(filteredAuthors, function(author) {
+          var authorEl = authorData.filter(function (d) { return d == author; });
+          var authorCommits = _.where(filteredCommits, {author: author});
+
+          var commitDotData = authorEl.selectAll('circle').data(filteredCommits.length < 1000 ? authorCommits : [], function (d) { return d.date; });
+          commitDotData.enter().append('circle').attr(commitDotStartAttributes).transition().duration(1000).attr(commitDotAttributes);
+          commitDotData.transition().duration(1000).attr(commitDotAttributes);
+
+          var commitPathData = authorEl.selectAll('path').data([authorCommits]);
+          var commitPathStartAttributes = {
+            d: zeroLine,
+            fill: 'none',
+            'clip-path': 'url(#clip)',
+            stroke: colorScale(author)
+          };
+          var commitPathAttributes = {
+            d: rollingLine,
+            fill: 'none',
+            stroke: colorScale(author)
+          };
+          commitPathData.enter().append('path').attr(commitPathStartAttributes).transition().duration(1000).attr(commitPathAttributes);
+          commitPathData.transition().duration(1000).attr(commitPathAttributes);
+        });
+      }
+    </script>
+    <script src="{{{configUrl}}}"></script>
+    <script src="{{{dataUrl}}}"></script>
+  </body>
+</html>

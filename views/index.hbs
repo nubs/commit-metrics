@@ -28,6 +28,9 @@
       var margin = {top: 10, right: 140, bottom: 25, left: 60};
       var width = 960;
       var height = 480;
+      var animationLength = 1000;
+      var maxCircles = 1000;
+      var statClamp = 3000;
       var yMetric = 'added';
       var rollingPeriod = 7;
       var allAuthors = [];
@@ -98,7 +101,7 @@
         .domain([Date.today().addYears(-2), Date.today()])
         .range([0, width]);
       var yScale = d3.scale.linear()
-        .domain([0, 3000])
+        .domain([0, statClamp])
         .range([height, 0])
         .clamp(true)
         .nice();
@@ -112,7 +115,7 @@
         .y(yScale(0))
         .interpolate('basis');
       var colorScale = d3.scale.category20();
-      var transition = svg.transition().duration(1000).ease('exp-in-out');
+      var transition = svg.transition().duration(animationLength).ease('exp-in-out');
       var authorAttributes = {class: 'author', fill: colorScale};
       var legendAttributes = {class: 'legend', transform: function (d, i) { return 'translate(' + width + ',' + (i * 15) + ')'; }};
       var commitDotStartAttributes = {cx: rollingLine.x(), cy: yScale(0), r: 2.2, opacity: function (d) { return d[yMetric] ? 1 : 0; }, 'clip-path': 'url(#clip)'};
@@ -218,8 +221,8 @@
             var stats = {author: author, 'date': timestamp, count: onDate.length};
 
             var tempStats = _.reduce(onDate, function (memo, c) { return {added: memo.added + c.added, removed: memo.removed + c.removed}; }, {added: 0, removed: 0})
-            stats.added = Math.min(3000, tempStats.added);
-            stats.removed = Math.min(3000, tempStats.removed);
+            stats.added = Math.min(statClamp, tempStats.added);
+            stats.removed = Math.min(statClamp, tempStats.removed);
             authorStats.push(stats);
           }
 
@@ -259,8 +262,8 @@
         var authorLegend = authorData.enter().append('g').attr(authorAttributes).append('g').attr(legendAttributes);
         authorLegend.append('rect').attr({width: 10, height: 10});
         authorLegend.append('text').attr({x: 15, dy: '0.71em'}).text(String);
-        authorData.transition().duration(1000).attr(authorAttributes).select('.legend').attr(legendAttributes);
-        var authorExit = authorData.exit().transition().duration(1000);
+        authorData.transition().duration(animationLength).attr(authorAttributes).select('.legend').attr(legendAttributes);
+        var authorExit = authorData.exit().transition().duration(animationLength);
         authorExit.selectAll('circle').attr({cy: yScale(0)});
         authorExit.selectAll('path').attr({d: zeroLine});
         authorExit.remove();
@@ -269,9 +272,9 @@
           var authorEl = authorData.filter(function (d) { return d == author; });
           var authorCommits = _.where(filteredCommits, {author: author});
 
-          var commitDotData = authorEl.selectAll('circle').data(filteredCommits.length < 1000 ? authorCommits : [], function (d) { return d.date; });
-          commitDotData.enter().append('circle').attr(commitDotStartAttributes).transition().duration(1000).attr(commitDotAttributes);
-          commitDotData.transition().duration(1000).attr(commitDotAttributes);
+          var commitDotData = authorEl.selectAll('circle').data(filteredCommits.length < maxCircles ? authorCommits : [], function (d) { return d.date; });
+          commitDotData.enter().append('circle').attr(commitDotStartAttributes).transition().duration(animationLength).attr(commitDotAttributes);
+          commitDotData.transition().duration(animationLength).attr(commitDotAttributes);
 
           var commitPathData = authorEl.selectAll('path').data([authorCommits]);
           var commitPathStartAttributes = {
@@ -285,8 +288,8 @@
             fill: 'none',
             stroke: colorScale(author)
           };
-          commitPathData.enter().append('path').attr(commitPathStartAttributes).transition().duration(1000).attr(commitPathAttributes);
-          commitPathData.transition().duration(1000).attr(commitPathAttributes);
+          commitPathData.enter().append('path').attr(commitPathStartAttributes).transition().duration(animationLength).attr(commitPathAttributes);
+          commitPathData.transition().duration(animationLength).attr(commitPathAttributes);
         });
       }
     </script>
